@@ -582,7 +582,18 @@ class ToolHead:
                                   % (gcmd.get_commandline(),))
                 return
             accel = min(p, t)
+        old_max_accel = self.max_accel
         self.max_accel = accel
+        ratio = self.max_accel / old_max_accel
+        if ratio == 1:
+            return
+        self.requested_accel_to_decel *= ratio
+        ratio_sqrt = math.sqrt(ratio)
+        self.max_velocity = min(ratio_sqrt * self.max_velocity,
+                                self.config_max_velocity)
+        self.square_corner_velocity = min(
+            ratio_sqrt * self.square_corner_velocity,
+            self.config_square_corner_velocity)
         self._calc_junction_deviation()
 
 def add_printer_objects(config):
