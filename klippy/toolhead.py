@@ -16,9 +16,11 @@ class Move:
         self.toolhead = toolhead
         self.start_pos = tuple(start_pos)
         self.end_pos = tuple(end_pos)
-        self.accel = toolhead.max_accel
+        max_velocity, self.accel  = toolhead.get_max_velocity()
+        self.accel_ratio = toolhead._accel_ratio
+        self.cruise_accel_ratio = toolhead.cruise_accel_ratio
         self.timing_callbacks = []
-        velocity = min(speed, toolhead.max_velocity)
+        velocity = min(speed, max_velocity)
         self.is_kinematic_move = True
         self.axes_d = axes_d = [end_pos[i] - start_pos[i] for i in (0, 1, 2, 3)]
         self.move_d = move_d = math.sqrt(sum([d*d for d in axes_d[:3]]))
@@ -43,17 +45,26 @@ class Move:
         # can change in this move.
         self.max_start_v2 = 0.
         self.max_cruise_v2 = velocity**2
-        self.delta_v2 = 2.0 * move_d * self.accel
         self.max_smoothed_v2 = 0.
-        self.smooth_delta_v2 = 2.0 * move_d * toolhead.max_accel_to_decel
-    def limit_speed(self, speed, accel):
+    @property
+    def delta_v2(self):
+        return 2.0 * self.move_d * self.accel
+    @property
+    def smooth_delta_v2(self):
+        return  self.delta_v2 * self.cruise_accel_ratio
+    def __repr__(self):
+        return object.__repr__(self)[:-1] + str(self.__dict__) + '>'
+    def limit_speed(self, speed, accel, use_ratio=True):
         speed2 = speed**2
+        speed0, accel0 = speed, accel
+        if use_ratio:
+            ratio = self.accel_ratio
+            speed2 *= ratio
+            accel *= ratio
         if speed2 < self.max_cruise_v2:
             self.max_cruise_v2 = speed2
-            self.min_move_t = self.move_d / speed
+            self.min_move_t = self.move_d / math.sqrt(speed2)
         self.accel = min(self.accel, accel)
-        self.delta_v2 = 2.0 * self.move_d * self.accel
-        self.smooth_delta_v2 = min(self.smooth_delta_v2, self.delta_v2)
     def move_error(self, msg="Move out of range"):
         ep = self.end_pos
         m = "%s: %.3f %.3f %.3f [%.3f]" % (msg, ep[0], ep[1], ep[2], ep[3])
@@ -210,13 +221,18 @@ class ToolHead:
         self.printer.register_event_handler("klippy:shutdown",
                                             self._handle_shutdown)
         # Velocity and acceleration control
-        self.max_velocity = config.getfloat('max_velocity', above=0.)
-        self.max_accel = config.getfloat('max_accel', above=0.)
-        self.requested_accel_to_decel = config.getfloat(
-            'max_accel_to_decel', self.max_accel * 0.5, above=0.)
-        self.max_accel_to_decel = self.requested_accel_to_decel
-        self.square_corner_velocity = config.getfloat(
+        self.config_max_velocity =  config.getfloat('max_velocity', above=0.)
+        self.config_max_accel = config.getfloat('max_accel', above=0.)
+        self.config_square_corner_velocity = config.getfloat(
             'square_corner_velocity', 5., minval=0.)
+        self._max_velocity = self.config_max_velocity
+        self._max_accel = self.config_max_accel
+        self.cruise_accel_ratio = config.getfloat(
+            'cruise_accel_ratio', 0.5, above=0.)
+        self._square_corner_velocity = self.config_square_corner_velocity
+        self._accel_ratio = config.getfloat(
+            'default_accel', 0.25 * self._max_accel,
+            minval=0., maxval=self._max_accel) / self._max_accel
         self.junction_deviation = 0.
         self._calc_junction_deviation()
         # Print time tracking
@@ -503,10 +519,11 @@ class ToolHead:
                      'estimated_print_time': estimated_print_time,
                      'extruder': self.extruder.get_name(),
                      'position': self.Coord(*self.commanded_pos),
-                     'max_velocity': self.max_velocity,
-                     'max_accel': self.max_accel,
-                     'max_accel_to_decel': self.requested_accel_to_decel,
-                     'square_corner_velocity': self.square_corner_velocity})
+                     'max_velocity': self._max_velocity,
+                     'max_accel': self._max_accel,
+                     'max_accel_to_decel': self.cruise_accel_ratio * self._max_accel,
+                     'square_corner_velocity': self._square_corner_velocity,
+                     'ratio': self._accel_ratio})
         return res
     def _handle_shutdown(self):
         self.can_pause = False
@@ -535,12 +552,12 @@ class ToolHead:
     def note_kinematic_activity(self, kin_time):
         self.last_kin_move_time = max(self.last_kin_move_time, kin_time)
     def get_max_velocity(self):
-        return self.max_velocity, self.max_accel
+        ratio = self._accel_ratio
+        sqrt_ratio = math.sqrt(ratio)
+        return sqrt_ratio * self._max_velocity, ratio * self._max_accel
     def _calc_junction_deviation(self):
-        scv2 = self.square_corner_velocity**2
-        self.junction_deviation = scv2 * (math.sqrt(2.) - 1.) / self.max_accel
-        self.max_accel_to_decel = min(self.requested_accel_to_decel,
-                                      self.max_accel)
+        scv2 = self._square_corner_velocity**2
+        self.junction_deviation = scv2 * (math.sqrt(2.) - 1.) / self._max_accel
     def cmd_G4(self, gcmd):
         # Dwell
         delay = gcmd.get_float('P', 0., minval=0.) / 1000.
@@ -551,50 +568,43 @@ class ToolHead:
     cmd_SET_VELOCITY_LIMIT_help = "Set printer velocity limits"
     def cmd_SET_VELOCITY_LIMIT(self, gcmd):
         print_time = self.get_last_move_time()
-        max_velocity = gcmd.get_float('VELOCITY', self.max_velocity, above=0.)
-        max_accel = gcmd.get_float('ACCEL', self.max_accel, above=0.)
-        square_corner_velocity = gcmd.get_float(
-            'SQUARE_CORNER_VELOCITY', self.square_corner_velocity, minval=0.)
-        self.requested_accel_to_decel = gcmd.get_float(
-            'ACCEL_TO_DECEL', self.requested_accel_to_decel, above=0.)
-        self.max_velocity = max_velocity
-        self.max_accel = max_accel
-        self.square_corner_velocity = square_corner_velocity
+        self._max_velocity = gcmd.get_float('VELOCITY', self._max_velocity, above=0.)
+        self._max_accel = gcmd.get_float('ACCEL', self._max_accel, above=0.)
+        self._square_corner_velocity = gcmd.get_float(
+            'SQUARE_CORNER_VELOCITY', self._square_corner_velocity)
+        self.cruise_accel_ratio = gcmd.get_float(
+            'ACCEL_TO_DECEL', self.cruise_accel_ratio * self._max_accel,
+            above=0., maxval=self._max_accel) / self._max_accel
+        self._accel_ratio = gcmd.get_float( 'RATIO', self._accel_ratio,
+            above=0., maxval=self.config_max_accel / self._max_accel)
         self._calc_junction_deviation()
-        msg = ("max_velocity: %.6f\n"
-               "max_accel: %.6f\n"
-               "max_accel_to_decel: %.6f\n"
-               "square_corner_velocity: %.6f"% (
-                   self.max_velocity, self.max_accel,
-                   self.requested_accel_to_decel,
-                   self.square_corner_velocity))
+        ratio_sqrt = math.sqrt(self._accel_ratio)
+        msg = ("max_velocity: %.6f/%.6f\n"
+               "max_accel: %.6f/%.6f\n"
+               "max_accel_to_decel: %.6f/%.6f\n"
+               "square_corner_velocity: %.6f/%.6f"% (
+                   self._max_velocity * ratio_sqrt, self._max_velocity,
+                   self._max_accel * self._accel_ratio, self._max_accel,
+                   self.cruise_accel_ratio * self._max_accel * self._accel_ratio,
+                   self.cruise_accel_ratio * self._max_accel,
+                   self._square_corner_velocity * ratio_sqrt, self._square_corner_velocity
+                   ))
         self.printer.set_rollover_info("toolhead", "toolhead: %s" % (msg,))
         gcmd.respond_info(msg, log=False)
     def cmd_M204(self, gcmd):
+        get = lambda k: gcmd.get_float(k, None, above=0., maxval=self.config_max_accel, clip=True)
         # Use S for accel
-        accel = gcmd.get_float('S', None, above=0.)
+        accel = get('S')
         if accel is None:
             # Use minimum of P and T for accel
-            p = gcmd.get_float('P', None, above=0.)
-            t = gcmd.get_float('T', None, above=0.)
+            p = get('P')
+            t = get('T')
             if p is None or t is None:
                 gcmd.respond_info('Invalid M204 command "%s"'
                                   % (gcmd.get_commandline(),))
                 return
             accel = min(p, t)
-        old_max_accel = self.max_accel
-        self.max_accel = accel
-        ratio = self.max_accel / old_max_accel
-        if ratio == 1:
-            return
-        self.requested_accel_to_decel *= ratio
-        ratio_sqrt = math.sqrt(ratio)
-        self.max_velocity = min(ratio_sqrt * self.max_velocity,
-                                self.config_max_velocity)
-        self.square_corner_velocity = min(
-            ratio_sqrt * self.square_corner_velocity,
-            self.config_square_corner_velocity)
-        self._calc_junction_deviation()
+        self._accel_ratio = accel / self.config_max_accel
 
 def add_printer_objects(config):
     config.get_printer().add_object('toolhead', ToolHead(config))

@@ -121,7 +121,7 @@ class PrinterExtruder:
                     " option for details" % (move.axes_d[3], self.max_e_dist))
             inv_extrude_r = 1. / abs(axis_r)
             move.limit_speed(self.max_e_velocity * inv_extrude_r,
-                             self.max_e_accel * inv_extrude_r)
+                             self.max_e_accel * inv_extrude_r, False)
         elif axis_r > self.max_extrude_ratio:
             if move.axes_d[3] <= self.nozzle_diameter * self.max_extrude_ratio:
                 # Permit extrusion if amount extruded is tiny
