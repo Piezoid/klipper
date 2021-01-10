@@ -38,7 +38,7 @@ class GCodeCommand:
     # Parameter parsing helpers
     class sentinel: pass
     def get(self, name, default=sentinel, parser=str, minval=None, maxval=None,
-            above=None, below=None):
+            above=None, below=None, clip=False):
         value = self._params.get(name)
         if value is None:
             if default is self.sentinel:
@@ -51,9 +51,13 @@ class GCodeCommand:
             raise self.error("Error on '%s': unable to parse %s"
                              % (self._commandline, value))
         if minval is not None and value < minval:
+            if clip:
+                return minval
             raise self.error("Error on '%s': %s must have minimum of %s"
                              % (self._commandline, name, minval))
         if maxval is not None and value > maxval:
+            if clip:
+                return maxval
             raise self.error("Error on '%s': %s must have maximum of %s"
                              % (self._commandline, name, maxval))
         if above is not None and value <= above:
@@ -63,12 +67,14 @@ class GCodeCommand:
             raise self.error("Error on '%s': %s must be below %s"
                              % (self._commandline, name, below))
         return value
-    def get_int(self, name, default=sentinel, minval=None, maxval=None):
-        return self.get(name, default, parser=int, minval=minval, maxval=maxval)
+    def get_int(self, name, default=sentinel, minval=None, maxval=None,
+                clip=False):
+        return self.get(name, default, parser=int, minval=minval,
+                        maxval=maxval, clip=clip)
     def get_float(self, name, default=sentinel, minval=None, maxval=None,
-                  above=None, below=None):
+                  above=None, below=None, clip=False):
         return self.get(name, default, parser=float, minval=minval,
-                        maxval=maxval, above=above, below=below)
+                        maxval=maxval, above=above, below=below, clip=clip)
 
 # Parse and dispatch G-Code commands
 class GCodeDispatch:
