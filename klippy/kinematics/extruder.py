@@ -44,6 +44,8 @@ class PrinterExtruder:
         pressure_advance = config.getfloat('pressure_advance', 0., minval=0.)
         smooth_time = config.getfloat('pressure_advance_smooth_time',
                                       0.040, above=0., maxval=.200)
+        # State variables:
+        self.retracted_length = 0
         # Setup iterative solver
         ffi_main, ffi_lib = chelper.get_ffi()
         self.trapq = ffi_main.gc(ffi_lib.trapq_alloc(), ffi_lib.trapq_free)
@@ -107,12 +109,40 @@ class PrinterExtruder:
     def stats(self, eventtime):
         return self.heater.stats(eventtime)
     def check_move(self, move):
+        RETRACT_TOL = 1e-6
         axis_r = move.axes_r[3]
+        axis_d = move.axes_d[3]
+        retracted_length = self.retracted_length
+        assert (axis_r < 0.0) == (axis_d < 0.0)
         if not self.heater.can_extrude:
             raise self.printer.command_error(
                 "Extrude below minimum temp\n"
                 "See the 'min_extrude_temp' config option for details")
-        if (not move.axes_d[0] and not move.axes_d[1]) or axis_r < 0.:
+        if retracted_length > 0 and axis_d > RETRACT_TOL:
+            non_extruding = True
+            extruding = False
+            extrude_d = axis_d - retracted_length
+            if extrude_d < -RETRACT_TOL:
+                #print('unretract(partial)', retracted_length, -extrude_d)
+                self.retracted_length = -extrude_d
+            else:
+                self.retracted_length = 0
+                #print('unretract(full)', retracted_length, -extrude_d)
+                if extrude_d > RETRACT_TOL:
+                    extruding = True # Partially extruding move
+                    logging.warning("unretract move extruding %.2fµm", 1e3*extrude_d)
+                elif abs(extrude_d) > 100.*RETRACT_TOL:
+                    logging.warning("not precise unretract: %.2fµm - %.2fµm", 1e3*retracted_length, 1e3*axis_d)
+        else:
+            assert retracted_length == 0 or axis_d < -RETRACT_TOL
+            non_extruding = axis_d < 0
+            extruding = not non_extruding
+            if non_extruding:
+                #print('retract', self.retracted_length, axis_d)
+                self.retracted_length -= axis_d
+        #print(move.is_kinematic_move, extruding, non_extruding, self.retracted_length, axis_d)
+        move.extruding = extruding
+        if non_extruding or not move.is_kinematic_move:
             # Extrude only move (or retraction move) - limit accel and velocity
             if abs(move.axes_d[3]) > self.max_e_dist:
                 raise self.printer.command_error(
@@ -122,7 +152,7 @@ class PrinterExtruder:
             inv_extrude_r = 1. / abs(axis_r)
             move.limit_speed(self.max_e_velocity * inv_extrude_r,
                              self.max_e_accel * inv_extrude_r, False)
-        elif axis_r > self.max_extrude_ratio:
+        if move.is_kinematic_move and extruding and axis_r > self.max_extrude_ratio:
             if move.axes_d[3] <= self.nozzle_diameter * self.max_extrude_ratio:
                 # Permit extrusion if amount extruded is tiny
                 return
@@ -143,9 +173,7 @@ class PrinterExtruder:
         accel = move.accel * axis_r
         start_v = move.start_v * axis_r
         cruise_v = move.cruise_v * axis_r
-        pressure_advance = 0.
-        if axis_r > 0. and (move.axes_d[0] or move.axes_d[1]):
-            pressure_advance = self.pressure_advance
+        pressure_advance = self.pressure_advance if move.extruding and move.is_kinematic_move else 0
         # Queue movement (x is extruder movement, y is pressure advance)
         self.trapq_append(self.trapq, print_time,
                           move.accel_t, move.cruise_t, move.decel_t,
