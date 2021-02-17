@@ -8,7 +8,7 @@ from . import cartesian
 
 class CartSKinematics(cartesian.CartKinematics):
     def __init__(self, toolhead, config):
-        super().__init__(toolhead, config)
+        cartesian.CartKinematics.__init__(self, toolhead, config)
         # Setup y axis limits
         max_velocity = toolhead.max_velocity
         max_accel = toolhead.max_accel
