@@ -10,10 +10,10 @@ import logging, bisect
 # Interface between MCU adc and heater temperature callbacks
 ######################################################################
 
-SAMPLE_TIME = 0.001
-SAMPLE_COUNT = 8
-REPORT_TIME = 0.300
+SAMPLE_COUNT = 16
+REPORT_TIME = 0.100
 RANGE_CHECK_COUNT = 4
+SAMPLE_TIME =  REPORT_TIME / (SAMPLE_COUNT + 1)
 
 # Interface between ADC and heater temperature callbacks
 class PrinterADCtoTemperature:
