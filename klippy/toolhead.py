@@ -579,14 +579,14 @@ class ToolHead:
             above=0., maxval=self.config_max_accel / self._max_accel)
         self._calc_junction_deviation()
         ratio_sqrt = math.sqrt(self._accel_ratio)
-        msg = ("max_velocity: %.6f/%.6f\n"
-               "max_accel: %.6f/%.6f\n"
-               "max_accel_to_decel: %.6f/%.6f\n"
-               "square_corner_velocity: %.6f/%.6f"% (
+        ma2d = self.cruise_accel_ratio * self._max_accel
+        msg = ("max_velocity: %.3f/%.3f\n"
+               "max_accel: %.0f/%.0f\n"
+               "max_accel_to_decel: %.3f/%.3f=%.6f*accel\n"
+               "square_corner_velocity: %.3f/%.3f"% (
                    self._max_velocity * ratio_sqrt, self._max_velocity,
                    self._max_accel * self._accel_ratio, self._max_accel,
-                   self.cruise_accel_ratio * self._max_accel * self._accel_ratio,
-                   self.cruise_accel_ratio * self._max_accel,
+                   ma2d * self._accel_ratio, ma2d, self.cruise_accel_ratio,
                    self._square_corner_velocity * ratio_sqrt, self._square_corner_velocity
                    ))
         self.printer.set_rollover_info("toolhead", "toolhead: %s" % (msg,))
