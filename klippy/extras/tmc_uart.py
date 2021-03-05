@@ -224,6 +224,8 @@ class MCU_TMC_uart:
             val = self.mcu_uart.reg_read(self.instance_id, self.addr, reg)
             if val is not None:
                 return val
+            else:
+                logging.warning("Unable to read tmc uart '%s' register %s (retry %d)" % (self.name, reg_name, retry))
         raise self.printer.command_error(
             "Unable to read tmc uart '%s' register %s" % (self.name, reg_name))
     def get_register(self, reg_name):
@@ -243,5 +245,7 @@ class MCU_TMC_uart:
                 self.ifcnt = self._do_get_register("IFCNT")
                 if self.ifcnt == (ifcnt + 1) & 0xff:
                     return
+                else:
+                    logging.warning("Unable to write tmc uart '%s' register %s (retry %d)" % (self.name, reg_name, retry))
         raise self.printer.command_error(
             "Unable to write tmc uart '%s' register %s" % (self.name, reg_name))
