@@ -86,6 +86,7 @@ class TMC2209:
         set_config_field(config, "pwm_freq", 1)
         set_config_field(config, "pwm_autoscale", True)
         set_config_field(config, "pwm_autograd", True)
+        set_config_field(config, "freewheel", 0)
         set_config_field(config, "PWM_REG", 8)
         set_config_field(config, "PWM_LIM", 12)
         set_config_field(config, "SGTHRS", 0)

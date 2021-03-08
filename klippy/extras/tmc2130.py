@@ -104,7 +104,7 @@ class TMCCurrentHelper:
         run_current = config.getfloat('run_current',
                                       above=0., maxval=MAX_CURRENT)
         hold_current = config.getfloat('hold_current', run_current,
-                                       above=0., maxval=MAX_CURRENT)
+                                       minval=0., maxval=MAX_CURRENT)
         self.sense_resistor = config.getfloat('sense_resistor', 0.110, above=0.)
         vsense, irun, ihold = self._calc_current(run_current, hold_current)
         self.fields.set_field("vsense", vsense)
