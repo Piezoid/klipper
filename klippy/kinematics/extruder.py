@@ -95,7 +95,8 @@ class PrinterExtruder:
         return dict(self.heater.get_status(eventtime),
                     can_extrude=self.heater.can_extrude,
                     pressure_advance=self.pressure_advance,
-                    smooth_time=self.pressure_advance_smooth_time)
+                    smooth_time=self.pressure_advance_smooth_time,
+                    nozzle_diameter=self.nozzle_diameter)
     def get_name(self):
         return self.name
     def get_heater(self):
