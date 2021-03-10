@@ -227,8 +227,8 @@ class ToolHead:
             'square_corner_velocity', 5., minval=0.)
         self._max_velocity = self.config_max_velocity
         self._max_accel = self.config_max_accel
-        self.cruise_accel_ratio = config.getfloat(
-            'cruise_accel_ratio', 0.5, above=0.)
+        self.cruise_accel_ratio = 1 - config.getfloat(
+            'min_cruise_ratio', 0.5, minval=0., below=1)
         self._square_corner_velocity = self.config_square_corner_velocity
         self._accel_ratio = config.getfloat(
             'default_accel', 0.25 * self._max_accel,
@@ -522,6 +522,7 @@ class ToolHead:
                      'max_velocity': self._max_velocity,
                      'max_accel': self._max_accel,
                      'max_accel_to_decel': self.cruise_accel_ratio * self._max_accel,
+                     'min_cruise_ratio': 1 - self.cruise_accel_ratio,
                      'square_corner_velocity': self._square_corner_velocity,
                      'ratio': self._accel_ratio})
         return res
@@ -575,20 +576,28 @@ class ToolHead:
         self.cruise_accel_ratio = gcmd.get_float(
             'ACCEL_TO_DECEL', self.cruise_accel_ratio * self._max_accel,
             above=0., maxval=self._max_accel) / self._max_accel
+        accel_todeccel = gcmd.get_float(
+            'ACCEL_TO_DECEL', None,
+            above=0., maxval=self._max_accel)
+        if accel_todeccel is None:
+            min_cruise_ratio = gcmd.get_float(
+            'MIN_CRUISE_RATIO', None,
+            minval=0., below=1)
+            if min_cruise_ratio is not None:
+                self.cruise_accel_ratio = 1 - min_cruise_ratio
+        else:
+            self.cruise_accel_ratio = accel_todeccel / self._max_accel
+
+
         self._accel_ratio = gcmd.get_float( 'RATIO', self._accel_ratio,
             above=0., maxval=self.config_max_accel / self._max_accel)
         self._calc_junction_deviation()
         ratio_sqrt = math.sqrt(self._accel_ratio)
         ma2d = self.cruise_accel_ratio * self._max_accel
-        msg = ("max_velocity: %.3f/%.3f\n"
-               "max_accel: %.0f/%.0f\n"
-               "max_accel_to_decel: %.3f/%.3f=%.6f*accel\n"
-               "square_corner_velocity: %.3f/%.3f"% (
-                   self._max_velocity * ratio_sqrt, self._max_velocity,
-                   self._max_accel * self._accel_ratio, self._max_accel,
-                   ma2d * self._accel_ratio, ma2d, self.cruise_accel_ratio,
-                   self._square_corner_velocity * ratio_sqrt, self._square_corner_velocity
-                   ))
+        msg = (f'accel/max_accel: {self._max_accel * self._accel_ratio:.0f}/{self._max_accel:.0f} = accel_ratio: {self._accel_ratio:.3f}\n'
+               f'accel_to_decel: {ma2d * self._accel_ratio:.0f} = (1 - {1 - self.cruise_accel_ratio:.3f})*accel\n'
+               f'max_velocity: {ratio_sqrt*self._max_velocity:.3f} = {ratio_sqrt:.4f}*{self._max_velocity:.2f}\n'
+               f'square_corner_velocity: {self._square_corner_velocity * ratio_sqrt:.3f} = {ratio_sqrt:.4f}*{self._square_corner_velocity:.2f}')
         self.printer.set_rollover_info("toolhead", "toolhead: %s" % (msg,))
         gcmd.respond_info(msg, log=False)
     def cmd_M204(self, gcmd):

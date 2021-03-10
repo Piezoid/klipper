@@ -91,12 +91,14 @@ max_velocity:
 max_accel:
 #   Maximum acceleration (in mm/s^2) of the toolhead (relative to the
 #   print). This parameter must be specified.
-#max_accel_to_decel:
-#   A pseudo acceleration (in mm/s^2) controlling how fast the
-#   toolhead may go from acceleration to deceleration. It is used to
-#   reduce the top speed of short zig-zag moves (and thus reduce
-#   printer vibration from these moves). The default is half of
-#   max_accel.
+default_max_accel:
+#   Default print acceleration (M204). Default to a fourth of max_accel.
+#min_cruise_ratio: 0.5
+#   Fraction of the distance of a travel done at constant velocity.
+#   Controls how fast the toolhead may go from acceleration to
+#   deceleration. It is used to reduce the top speed of short zig-zag
+#   moves (and thus reduce printer vibration from these moves).
+#   The default is half of travel length.
 #square_corner_velocity: 5.0
 #   The maximum velocity (in mm/s) that the toolhead may travel a 90
 #   degree corner at. A non-zero value can reduce changes in extruder
