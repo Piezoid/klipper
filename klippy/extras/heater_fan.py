@@ -28,10 +28,15 @@ class PrinterHeaterFan:
         return self.fan.get_status(eventtime)
     def callback(self, eventtime):
         speed = 0.
+        off_below = self.fan.off_below
+        heater_temp = self.heater_temp
         for heater in self.heaters:
             current_temp, target_temp = heater.get_temp(eventtime)
-            if target_temp or current_temp > self.heater_temp:
-                speed = self.fan_speed
+            if target_temp or current_temp > heater_temp:
+                req_speed = off_below + (self.fan_speed - off_below) \
+                          * (current_temp - heater_temp) \
+                          / (heater.max_temp - heater_temp)
+                speed = max(speed, req_speed)
         if speed != self.last_speed:
             self.last_speed = speed
             curtime = self.printer.get_reactor().monotonic()
