@@ -892,7 +892,7 @@ class MCUConnection:
             SPI_CFG_CMD % (SPI_OID, cs_pin),
             bus_cmd,
         ]
-        config_crc = zlib.crc32('\n'.join(cfg_cmds)) & 0xffffffff
+        config_crc = zlib.crc32(('\n'.join(cfg_cmds)).encode("utf-8")) & 0xffffffff
         cfg_cmds.append(FINALIZE_CFG_CMD % (config_crc,))
         for cmd in cfg_cmds:
             self._serial.send(cmd)
@@ -911,7 +911,7 @@ class MCUConnection:
         input_sha = hashlib.sha1()
         sd_sha = hashlib.sha1()
         klipper_bin_path = self.board_config['klipper_bin_path']
-        fw_path = self.board_config.get('firmware_path', "firmware.bin")
+        fw_path = self.board_config.get('firmware_path', "firmware.bin").encode("utf-8")
         try:
             with open(klipper_bin_path, 'rb') as local_f:
                 with self.fatfs.open_file(fw_path, "wb") as sd_f:
@@ -953,7 +953,7 @@ class MCUConnection:
         output("Verifying Flash...")
         cur_fw_sha = hashlib.sha1()
         cur_fw_path = self.board_config.get('current_firmware_path',
-                                            "FIRMWARE.CUR")
+                                            "FIRMWARE.CUR").encode("utf-8")
         try:
             with self.fatfs.open_file(cur_fw_path, 'r') as sd_f:
                 while True:
