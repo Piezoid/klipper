@@ -23,7 +23,7 @@ def parse_log(logname, mcu):
         mcu = "mcu"
     mcu_prefix = mcu + ":"
     apply_prefix = { p: 1 for p in APPLY_PREFIX }
-    f = open(logname, 'rb')
+    f = open(logname, 'r', encoding='utf-8')
     out = []
     for line in f:
         parts = line.split()
