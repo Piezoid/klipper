@@ -20,7 +20,6 @@ class Move:
         self.accel_ratio = toolhead._accel_ratio
         self.cruise_accel_ratio = toolhead.cruise_accel_ratio
         self.timing_callbacks = []
-        velocity = min(speed, max_velocity)
         self.is_kinematic_move = True
         self.axes_d = axes_d = [end_pos[i] - start_pos[i] for i in (0, 1, 2, 3)]
         self.move_d = move_d = math.sqrt(sum([d*d for d in axes_d[:3]]))
@@ -38,6 +37,13 @@ class Move:
             self.is_kinematic_move = False
         else:
             inv_move_d = 1. / move_d
+            if axes_d[3] >= .000000001:
+                ratio = toolhead.extruder.E_per_nominal_line * move_d / axes_d[3]
+                if ratio < 0.5 or ratio > 2:
+                    ratio = (1+ratio)/2
+                if ratio > 0.5 and ratio < 2:
+                    speed *= ratio
+            velocity = min(speed, max_velocity)
         self.axes_r = [d * inv_move_d for d in axes_d]
         self.min_move_t = move_d / velocity
         # Junction speeds are tracked in velocity squared.  The

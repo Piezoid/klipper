@@ -22,7 +22,9 @@ class PrinterExtruder:
         filament_diameter = config.getfloat(
             'filament_diameter', minval=self.nozzle_diameter)
         self.filament_area = math.pi * (filament_diameter * .5)**2
-        def_max_cross_section = 4. * self.nozzle_diameter**2
+        nozzle_section = self.nozzle_diameter**2
+        self.E_per_nominal_line = nozzle_section*3/4 / self.filament_area
+        def_max_cross_section = 4. * nozzle_section
         def_max_extrude_ratio = def_max_cross_section / self.filament_area
         max_cross_section = config.getfloat(
             'max_extrude_cross_section', def_max_cross_section, above=0.)
