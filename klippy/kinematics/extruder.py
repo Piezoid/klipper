@@ -98,7 +98,8 @@ class PrinterExtruder:
                     can_extrude=self.heater.can_extrude,
                     pressure_advance=self.pressure_advance,
                     smooth_time=self.pressure_advance_smooth_time,
-                    nozzle_diameter=self.nozzle_diameter)
+                    nozzle_diameter=self.nozzle_diameter,
+                    filament_area=self.filament_area)
     def get_name(self):
         return self.name
     def get_heater(self):
