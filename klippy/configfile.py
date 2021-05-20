@@ -193,7 +193,25 @@ class PrinterConfig:
         # Buffer lines between includes and parse as a unit so that overrides
         # in includes apply linearly as they do within a single file
         buffer = []
+        in_block_comment = False
         for line in lines:
+            # Strip block comment
+            if not in_block_comment:
+                pos = line.find('/*')
+                if pos >= 0:
+                    pos_end = line.rfind('*/')
+                    if pos_end >= 0:
+                        line = line[:pos] + line[pos_end+2:]
+                    else:
+                        line = line[:pos]
+                        in_block_comment = True
+            else:
+                pos_end = line.rfind('*/')
+                if pos >= 0:
+                    line = line[pos_end+2:]
+                    in_block_comment = False
+                else:
+                    continue
             # Strip trailing comment
             pos = line.find('#')
             if pos >= 0:
