@@ -53,7 +53,10 @@ class TemplateWrapper:
             msg = "Error loading template '%s': %s" % (
                  name, traceback.format_exception_only(type(e), e)[-1])
             logging.exception(msg)
-            raise printer.config_error(msg)
+            if name == '[interactive]':
+                raise self.gcode.error(msg)
+            else:
+                raise printer.config_error(msg)
     def render(self, context=None):
         if context is None:
             context = self.create_template_context()
@@ -72,6 +75,11 @@ class PrinterGCodeMacro:
     def __init__(self, config):
         self.printer = config.get_printer()
         self.env = jinja2.Environment('{%', '%}', '{', '}')
+        gcode = self.printer.lookup_object('gcode')
+        gcode.register_command('SUBS', self.cmd_SUBS,
+            desc="Render template into a respond message")
+        gcode.register_command('EXEC', self.cmd_SUBS,
+            desc="Execute template command")
     def load_template(self, config, option, default=None):
         name = "%s:%s" % (config.get_name(), option)
         if default is None:
@@ -102,6 +110,16 @@ class PrinterGCodeMacro:
             'action_raise_error': self._action_raise_error,
             'action_call_remote_method': self._action_call_remote_method,
         }
+    def cmd_SUBS(self, gcmd):
+        template = TemplateWrapper(self.printer, self.env, '[interactive]',
+                gcmd.get('TMPL', ''))
+        if gcmd.get_command() == 'EXEC':
+            template.run_gcode_from_command()
+        else:
+            msg = template.render()
+            did_ack = gcmd.ack(msg)
+            if not did_ack:
+                gcmd.respond_raw(msg)
 
 def load_config(config):
     return PrinterGCodeMacro(config)
