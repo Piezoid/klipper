@@ -44,7 +44,7 @@ class HomingMove:
         if max_steps <= 0.:
             return .001
         return move_t / max_steps
-    def homing_move(self, movepos, speed, probe_pos=False,
+    def homing_move(self, movepos, speed, accel, probe_pos=False,
                     triggered=True, check_triggered=True):
         # Notify start of homing/probing move
         self.printer.send_event("homing:homing_move_begin", self)
@@ -70,7 +70,7 @@ class HomingMove:
         # Issue move
         error = None
         try:
-            self.toolhead.drip_move(movepos, speed, all_endstop_trigger)
+            self.toolhead.drip_move(movepos, speed, accel, all_endstop_trigger)
         except self.printer.command_error as e:
             error = "Error during homing move: %s" % (str(e),)
         # Wait for endstops to trigger
@@ -141,7 +141,7 @@ class Homing:
         endstops = [es for rail in rails for es in rail.get_endstops()]
         hi = rails[0].get_homing_info()
         hmove = HomingMove(self.printer, endstops)
-        hmove.homing_move(movepos, hi.speed)
+        hmove.homing_move(movepos, hi.speed, hi.accel)
         # Perform second home
         if hi.retract_dist:
             # Retract
@@ -150,13 +150,14 @@ class Homing:
             retract_r = min(1., hi.retract_dist / move_d)
             retractpos = [mp - ad * retract_r
                           for mp, ad in zip(movepos, axes_d)]
-            self.toolhead.move(retractpos, hi.retract_speed)
+            self.toolhead.move(retractpos, hi.retract_speed, hi.retract_accel)
             # Home again
             forcepos = [rp - ad * retract_r
                         for rp, ad in zip(retractpos, axes_d)]
             self.toolhead.set_position(forcepos)
             hmove = HomingMove(self.printer, endstops)
-            hmove.homing_move(movepos, hi.second_homing_speed)
+            hmove.homing_move(movepos, hi.second_homing_speed,
+                              hi.second_homing_accel)
             if hmove.check_no_movement() is not None:
                 raise self.printer.command_error(
                     "Endstop %s still triggered after retract"

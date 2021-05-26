@@ -60,6 +60,7 @@ class ManualProbeHelper:
         self.gcode = self.printer.lookup_object('gcode')
         self.toolhead = self.printer.lookup_object('toolhead')
         self.speed = gcmd.get_float("SPEED", 5.)
+        self.accel = gcmd.get_float("ACCEL", 100)
         self.past_positions = []
         self.last_toolhead_pos = self.last_kinematics_pos = None
         # Register commands
@@ -93,8 +94,8 @@ class ManualProbeHelper:
         try:
             z_bob_pos = z_pos + Z_BOB_MINIMUM
             if curpos[2] < z_bob_pos:
-                self.toolhead.manual_move([None, None, z_bob_pos], self.speed)
-            self.toolhead.manual_move([None, None, z_pos], self.speed)
+                self.toolhead.manual_move([None, None, z_bob_pos], self.speed, self.accel)
+            self.toolhead.manual_move([None, None, z_pos], self.speed, self.accel)
         except self.printer.command_error as e:
             self.finalize(False)
             raise

@@ -36,7 +36,9 @@ class BedScrews:
             raise config.error("bed_screws: Must have at least three screws")
         self.states = {'adjust': screws, 'fine': fine_adjust}
         self.speed = config.getfloat('speed', 50., above=0.)
+        self.accel = config.getfloat('accel', 2000, above=0.)
         self.lift_speed = config.getfloat('probe_speed', 5., above=0.)
+        self.lift_accel = config.getfloat('probe_accel', 100, above=0.)
         self.horizontal_move_z = config.getfloat('horizontal_move_z', 5.)
         self.probe_z = config.getfloat('probe_height', 0.)
         # Register command
@@ -44,14 +46,14 @@ class BedScrews:
         self.gcode.register_command("BED_SCREWS_ADJUST",
                                     self.cmd_BED_SCREWS_ADJUST,
                                     desc=self.cmd_BED_SCREWS_ADJUST_help)
-    def move(self, coord, speed):
-        self.printer.lookup_object('toolhead').manual_move(coord, speed)
+    def move(self, coord, speed, accel):
+        self.printer.lookup_object('toolhead').manual_move(coord, speed, accel)
     def move_to_screw(self, state, screw):
         # Move up, over, and then down
-        self.move((None, None, self.horizontal_move_z), self.lift_speed)
+        self.move((None, None, self.horizontal_move_z), self.lift_speed, self.lift_accel)
         coord, name = self.states[state][screw]
-        self.move((coord[0], coord[1], self.horizontal_move_z), self.speed)
-        self.move((coord[0], coord[1], self.probe_z), self.lift_speed)
+        self.move((coord[0], coord[1], self.horizontal_move_z), self.speed, self.accel)
+        self.move((coord[0], coord[1], self.probe_z), self.lift_speed, self.lift_accel)
         # Update state
         self.state = state
         self.current_screw = screw
@@ -74,7 +76,7 @@ class BedScrews:
         if self.state is not None:
             raise gcmd.error("Already in bed_screws helper; use ABORT to exit")
         self.adjust_again = False
-        self.move((None, None, self.horizontal_move_z), self.speed)
+        self.move((None, None, self.horizontal_move_z), self.speed, self.accel)
         self.move_to_screw('adjust', 0)
     cmd_ACCEPT_help = "Accept bed screw position"
     def cmd_ACCEPT(self, gcmd):
@@ -94,7 +96,7 @@ class BedScrews:
             return
         # Done
         self.state = None
-        self.move((None, None, self.horizontal_move_z), self.lift_speed)
+        self.move((None, None, self.horizontal_move_z), self.lift_speed, self.lift_accel)
         gcmd.respond_info("Bed screws tool completed successfully")
     cmd_ADJUSTED_help = "Accept bed screw position after notable adjustment"
     def cmd_ADJUSTED(self, gcmd):

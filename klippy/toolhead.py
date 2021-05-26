@@ -12,18 +12,28 @@ import mcu, chelper, kinematics.extruder
 
 # Class to track each move request
 class Move:
-    def __init__(self, toolhead, start_pos, end_pos, speed):
+    def __init__(self, toolhead, start_pos, end_pos, speed, accel):
         self.toolhead = toolhead
         self.start_pos = tuple(start_pos)
         self.end_pos = tuple(end_pos)
         max_velocity, self.accel  = toolhead.get_max_velocity()
-        self.accel_ratio = toolhead._accel_ratio
+        self.accel_ratio = accel_ratio = accel / toolhead.config_max_accel
         self.cruise_accel_ratio = toolhead.cruise_accel_ratio
         self.timing_callbacks = []
-        self.is_kinematic_move = True
         self.axes_d = axes_d = [end_pos[i] - start_pos[i] for i in (0, 1, 2, 3)]
         self.move_d = move_d = math.sqrt(sum([d*d for d in axes_d[:3]]))
-        if move_d < .000000001:
+        self.is_kinematic_move = is_kinematic_move = move_d > .000000001
+        if is_kinematic_move:
+            inv_move_d = 1. / move_d
+            if axes_d[3] >= .000000001:
+                ratio = toolhead.extruder.E_per_nominal_line * move_d / axes_d[3]
+                # if ratio < 0.5 or ratio > 2:
+                #     ratio = (1+ratio)/2
+                # if ratio > 0.5 and ratio < 2:
+                speed *= ratio
+            self.accel = accel_ratio * toolhead.max_accel
+            self.max_cruise_v2 = min(speed**2, accel_ratio * toolhead.max_velocity**2)
+        else:
             # Extrude only move
             self.end_pos = (start_pos[0], start_pos[1], start_pos[2],
                             end_pos[3])
@@ -33,24 +43,12 @@ class Move:
             if move_d:
                 inv_move_d = 1. / move_d
             self.accel = 99999999.9
-            velocity = speed
-            self.is_kinematic_move = False
-        else:
-            inv_move_d = 1. / move_d
-            if axes_d[3] >= .000000001:
-                ratio = toolhead.extruder.E_per_nominal_line * move_d / axes_d[3]
-                if ratio < 0.5 or ratio > 2:
-                    ratio = (1+ratio)/2
-                if ratio > 0.5 and ratio < 2:
-                    speed *= ratio
-            velocity = min(speed, max_velocity)
+            self.max_cruise_v2 = speed**2
         self.axes_r = [d * inv_move_d for d in axes_d]
-        self.min_move_t = move_d / velocity
         # Junction speeds are tracked in velocity squared.  The
         # delta_v2 is the maximum amount of this squared-velocity that
         # can change in this move.
         self.max_start_v2 = 0.
-        self.max_cruise_v2 = velocity**2
         self.max_smoothed_v2 = 0.
     @property
     def delta_v2(self):
@@ -58,18 +56,17 @@ class Move:
     @property
     def smooth_delta_v2(self):
         return  self.delta_v2 * self.cruise_accel_ratio
-    def __repr__(self):
-        return object.__repr__(self)[:-1] + str(self.__dict__) + '>'
+    @property
+    def min_move_t(self):
+        return (self.move_d if self.is_kinematic_move else self.axes_d[3]
+               ) / math.sqrt(self.max_cruise_v2)
     def limit_speed(self, speed, accel, use_ratio=True):
         speed2 = speed**2
-        speed0, accel0 = speed, accel
         if use_ratio:
             ratio = self.accel_ratio
             speed2 *= ratio
             accel *= ratio
-        if speed2 < self.max_cruise_v2:
-            self.max_cruise_v2 = speed2
-            self.min_move_t = self.move_d / math.sqrt(speed2)
+        self.max_cruise_v2 = min(self.max_cruise_v2, speed2)
         self.accel = min(self.accel, accel)
     def move_error(self, msg="Move out of range"):
         ep = self.end_pos
@@ -227,18 +224,13 @@ class ToolHead:
         self.printer.register_event_handler("klippy:shutdown",
                                             self._handle_shutdown)
         # Velocity and acceleration control
-        self.config_max_velocity =  config.getfloat('max_velocity', above=0.)
-        self.config_max_accel = config.getfloat('max_accel', above=0.)
+        self.max_velocity = self.config_max_velocity = config.getfloat('max_velocity', above=0.)
+        self.max_accel = self.config_max_accel = config.getfloat('max_accel', above=0.)
         self.config_square_corner_velocity = config.getfloat(
             'square_corner_velocity', 5., minval=0.)
-        self._max_velocity = self.config_max_velocity
-        self._max_accel = self.config_max_accel
         self.cruise_accel_ratio = 1 - config.getfloat(
             'min_cruise_ratio', 0.5, minval=0., below=1)
-        self._square_corner_velocity = self.config_square_corner_velocity
-        self._accel_ratio = config.getfloat(
-            'default_accel', 0.25 * self._max_accel,
-            minval=0., maxval=self._max_accel) / self._max_accel
+        self.square_corner_velocity = self.config_square_corner_velocity
         self.junction_deviation = 0.
         self._calc_junction_deviation()
         # Print time tracking
@@ -290,7 +282,6 @@ class ToolHead:
         gcode.register_command('SET_VELOCITY_LIMIT',
                                self.cmd_SET_VELOCITY_LIMIT,
                                desc=self.cmd_SET_VELOCITY_LIMIT_help)
-        gcode.register_command('M204', self.cmd_M204)
         # Load some default modules
         modules = ["gcode_move", "homing", "idle_timeout", "statistics",
                    "manual_probe", "tuning_tower"]
@@ -427,8 +418,8 @@ class ToolHead:
         self.commanded_pos[:] = newpos
         self.kin.set_position(newpos, homing_axes)
         self.printer.send_event("toolhead:set_position")
-    def move(self, newpos, speed):
-        move = Move(self, self.commanded_pos, newpos, speed)
+    def move(self, newpos, speed, accel):
+        move = Move(self, self.commanded_pos, newpos, speed, accel)
         if not move.move_d:
             return
         if move.is_kinematic_move:
@@ -439,12 +430,12 @@ class ToolHead:
         self.move_queue.add_move(move)
         if self.print_time > self.need_check_stall:
             self._check_stall()
-    def manual_move(self, coord, speed):
+    def manual_move(self, coord, speed, accel):
         curpos = list(self.commanded_pos)
         for i in range(len(coord)):
             if coord[i] is not None:
                 curpos[i] = coord[i]
-        self.move(curpos, speed)
+        self.move(curpos, speed, accel)
         self.printer.send_event("toolhead:manual_move")
     def dwell(self, delay):
         next_print_time = self.get_last_move_time() + max(0., delay)
@@ -478,7 +469,7 @@ class ToolHead:
                 continue
             npt = min(self.print_time + DRIP_SEGMENT_TIME, next_print_time)
             self._update_move_time(npt)
-    def drip_move(self, newpos, speed, drip_completion):
+    def drip_move(self, newpos, speed, accel, drip_completion):
         self.dwell(self.kin_flush_delay)
         # Transition from "Flushed"/"Priming"/main state to "Drip" state
         self.move_queue.flush()
@@ -490,7 +481,7 @@ class ToolHead:
         self.drip_completion = drip_completion
         # Submit move
         try:
-            self.move(newpos, speed)
+            self.move(newpos, speed, accel)
         except self.printer.command_error as e:
             self.flush_step_generation()
             raise
@@ -525,12 +516,12 @@ class ToolHead:
                      'estimated_print_time': estimated_print_time,
                      'extruder': self.extruder.get_name(),
                      'position': self.Coord(*self.commanded_pos),
-                     'max_velocity': self._max_velocity,
-                     'max_accel': self._max_accel,
-                     'max_accel_to_decel': self.cruise_accel_ratio * self._max_accel,
+                     'max_velocity': self.max_velocity,
+                     'max_accel': self.max_accel,
+                     'max_accel_to_decel': self.cruise_accel_ratio * self.max_accel,
                      'min_cruise_ratio': 1 - self.cruise_accel_ratio,
-                     'square_corner_velocity': self._square_corner_velocity,
-                     'ratio': self._accel_ratio})
+                     'square_corner_velocity': self.square_corner_velocity,
+                    })
         return res
     def _handle_shutdown(self):
         self.can_pause = False
@@ -559,12 +550,10 @@ class ToolHead:
     def note_kinematic_activity(self, kin_time):
         self.last_kin_move_time = max(self.last_kin_move_time, kin_time)
     def get_max_velocity(self):
-        ratio = self._accel_ratio
-        sqrt_ratio = math.sqrt(ratio)
-        return sqrt_ratio * self._max_velocity, ratio * self._max_accel
+        return self.config_max_velocity, self.config_max_accel
     def _calc_junction_deviation(self):
-        scv2 = self._square_corner_velocity**2
-        self.junction_deviation = scv2 * (math.sqrt(2.) - 1.) / self._max_accel
+        scv2 = self.square_corner_velocity**2
+        self.junction_deviation = scv2 * (math.sqrt(2.) - 1.) / self.max_accel
     def cmd_G4(self, gcmd):
         # Dwell
         delay = gcmd.get_float('P', 0., minval=0.) / 1000.
@@ -575,16 +564,16 @@ class ToolHead:
     cmd_SET_VELOCITY_LIMIT_help = "Set printer velocity limits"
     def cmd_SET_VELOCITY_LIMIT(self, gcmd):
         print_time = self.get_last_move_time()
-        self._max_velocity = gcmd.get_float('VELOCITY', self._max_velocity, above=0.)
-        self._max_accel = gcmd.get_float('ACCEL', self._max_accel, above=0.)
-        self._square_corner_velocity = gcmd.get_float(
-            'SQUARE_CORNER_VELOCITY', self._square_corner_velocity)
+        self.max_velocity = gcmd.get_float('VELOCITY', self.max_velocity, above=0.)
+        self.max_accel = gcmd.get_float('ACCEL', self.max_accel, above=0.)
+        self.square_corner_velocity = gcmd.get_float(
+            'SQUARE_CORNER_VELOCITY', self.square_corner_velocity)
         self.cruise_accel_ratio = gcmd.get_float(
-            'ACCEL_TO_DECEL', self.cruise_accel_ratio * self._max_accel,
-            above=0., maxval=self._max_accel) / self._max_accel
+            'ACCEL_TO_DECEL', self.cruise_accel_ratio * self.max_accel,
+            above=0., maxval=self.max_accel) / self.max_accel
         accel_todeccel = gcmd.get_float(
             'ACCEL_TO_DECEL', None,
-            above=0., maxval=self._max_accel)
+            above=0., maxval=self.max_accel)
         if accel_todeccel is None:
             min_cruise_ratio = gcmd.get_float(
             'MIN_CRUISE_RATIO', None,
@@ -592,34 +581,15 @@ class ToolHead:
             if min_cruise_ratio is not None:
                 self.cruise_accel_ratio = 1 - min_cruise_ratio
         else:
-            self.cruise_accel_ratio = accel_todeccel / self._max_accel
-
-
-        self._accel_ratio = gcmd.get_float( 'RATIO', self._accel_ratio,
-            above=0., maxval=self.config_max_accel / self._max_accel)
+            self.cruise_accel_ratio = accel_todeccel / self.max_accel
         self._calc_junction_deviation()
-        ratio_sqrt = math.sqrt(self._accel_ratio)
-        ma2d = self.cruise_accel_ratio * self._max_accel
-        msg = (f'accel/max_accel: {self._max_accel * self._accel_ratio:.0f}/{self._max_accel:.0f} = accel_ratio: {self._accel_ratio:.3f}\n'
-               f'accel_to_decel: {ma2d * self._accel_ratio:.0f} = (1 - {1 - self.cruise_accel_ratio:.3f})*accel\n'
-               f'max_velocity: {ratio_sqrt*self._max_velocity:.3f} = {ratio_sqrt:.4f}*{self._max_velocity:.2f}\n'
-               f'square_corner_velocity: {self._square_corner_velocity * ratio_sqrt:.3f} = {ratio_sqrt:.4f}*{self._square_corner_velocity:.2f}')
+        ma2d = self.cruise_accel_ratio * self.max_accel
+        msg = (f'max_accel: {self.max_accel:.0f}\n'
+               f'accel_to_decel: {ma2d:.0f}*accel = (1 - {1 - self.cruise_accel_ratio:.3f})*accel\n'
+               f'max_velocity: {self.max_velocity:.2f}\n'
+               f'square_corner_velocity: {self.square_corner_velocity:.2f}')
         self.printer.set_rollover_info("toolhead", "toolhead: %s" % (msg,))
         gcmd.respond_info(msg, log=False)
-    def cmd_M204(self, gcmd):
-        get = lambda k: gcmd.get_float(k, None, above=0., maxval=self.config_max_accel, clip=True)
-        # Use S for accel
-        accel = get('S')
-        if accel is None:
-            # Use minimum of P and T for accel
-            p = get('P')
-            t = get('T')
-            if p is None or t is None:
-                gcmd.respond_info('Invalid M204 command "%s"'
-                                  % (gcmd.get_commandline(),))
-                return
-            accel = min(p, t)
-        self._accel_ratio = accel / self.config_max_accel
 
 def add_printer_objects(config):
     config.get_printer().add_object('toolhead', ToolHead(config))

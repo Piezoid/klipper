@@ -26,10 +26,10 @@ class BedTilt:
     def get_position(self):
         x, y, z, e = self.toolhead.get_position()
         return [x, y, z - x*self.x_adjust - y*self.y_adjust - self.z_adjust, e]
-    def move(self, newpos, speed):
+    def move(self, newpos, speed, accel):
         x, y, z, e = newpos
         self.toolhead.move([x, y, z + x*self.x_adjust + y*self.y_adjust
-                            + self.z_adjust, e], speed)
+                            + self.z_adjust, e], speed, accel)
     def update_adjust(self, x_adjust, y_adjust, z_adjust):
         self.x_adjust = x_adjust
         self.y_adjust = y_adjust

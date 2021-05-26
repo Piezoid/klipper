@@ -126,8 +126,8 @@ class PrinterProbe:
         self.gcode.respond_info("probe at %.3f,%.3f is z=%.6f"
                                 % (epos[0], epos[1], epos[2]))
         return epos[:3]
-    def _move(self, coord, speed):
-        self.printer.lookup_object('toolhead').manual_move(coord, speed)
+    def _move(self, coord, speed, accel):
+        self.printer.lookup_object('toolhead').manual_move(coord, speed, accel)
     def _calc_mean(self, positions):
         count = float(len(positions))
         return [sum([pos[i] for pos in positions]) / count
@@ -352,6 +352,7 @@ class ProbePointsHelper:
                     self.name))
         self.horizontal_move_z = config.getfloat('horizontal_move_z', 5.)
         self.speed = config.getfloat('speed', 50., above=0.)
+        self.accel = config.getfloat('accel', 1000., above=0.)
         self.use_offsets = False
         # Internal probing state
         self.lift_speed = self.speed
@@ -375,7 +376,7 @@ class ProbePointsHelper:
         if not self.results:
             # Use full speed to first probe position
             speed = self.speed
-        toolhead.manual_move([None, None, self.horizontal_move_z], speed)
+        toolhead.manual_move([None, None, self.horizontal_move_z], speed, self.accel)
         # Check if done probing
         if len(self.results) >= len(self.probe_points):
             toolhead.get_last_move_time()
@@ -388,7 +389,7 @@ class ProbePointsHelper:
         if self.use_offsets:
             nextpos[0] -= self.probe_offsets[0]
             nextpos[1] -= self.probe_offsets[1]
-        toolhead.manual_move(nextpos, self.speed)
+        toolhead.manual_move(nextpos, self.speed, self.accel)
         return False
     def start_probe(self, gcmd):
         manual_probe.verify_no_manual_probe(self.printer)

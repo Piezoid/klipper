@@ -66,9 +66,9 @@ class PrinterSkew:
         return [skewed_x, skewed_y, pos[2], pos[3]]
     def get_position(self):
         return self.calc_unskew(self.next_transform.get_position())
-    def move(self, newpos, speed):
+    def move(self, newpos, speed, accel):
         corrected_pos = self.calc_skew(newpos)
-        self.next_transform.move(corrected_pos, speed)
+        self.next_transform.move(corrected_pos, speed, accel)
     def _update_skew(self, xy_factor, xz_factor, yz_factor):
         self.xy_factor = xy_factor
         self.xz_factor = xz_factor

@@ -67,6 +67,7 @@ class VibrationPulseTest:
                                           minval=0.1, maxval=2.)
 
         self.probe_points = _parse_probe_points(config)
+
     def get_start_test_points(self):
         return self.probe_points
     def prepare_test(self, gcmd):
@@ -77,7 +78,9 @@ class VibrationPulseTest:
                                          above=0., maxval=2.)
     def run_test(self, axis, gcmd):
         toolhead = self.printer.lookup_object('toolhead')
+
         X, Y, Z, E = toolhead.get_position()
+
         sign = 1.
         freq = self.freq_start
         # Override maximum acceleration and acceleration to
@@ -97,18 +100,18 @@ class VibrationPulseTest:
         else:
             input_shaper = None
         gcmd.respond_info("Testing frequency %.0f Hz" % (freq,))
+
         while freq <= self.freq_end + 0.000001:
             t_seg = .25 / freq
             accel = self.accel_per_hz * freq
             max_v = accel * t_seg
-            toolhead.cmd_M204(self.gcode.create_gcode_command(
-                "M204", "M204", {"S": accel}))
+
             L = .5 * accel * t_seg**2
             dX, dY = axis.get_point(L)
             nX = X + sign * dX
             nY = Y + sign * dY
-            toolhead.move([nX, nY, Z, E], max_v)
-            toolhead.move([X, Y, Z, E], max_v)
+            toolhead.move([nX, nY, Z, E], max_v, accel)
+            toolhead.move([X, Y, Z, E], max_v, accel)
             sign = -sign
             old_freq = freq
             freq += 2. * t_seg * self.hz_per_sec
@@ -127,6 +130,7 @@ class ResonanceTester:
     def __init__(self, config):
         self.printer = config.get_printer()
         self.move_speed = config.getfloat('move_speed', 50., above=0.)
+        self.move_accel = config.getfloat('move_accel', 1000., above=0.)
         self.test = VibrationPulseTest(config)
         if not config.get('accel_chip_x', None):
             self.accel_chip_names = [('xy', config.get('accel_chip').strip())]
@@ -162,7 +166,7 @@ class ResonanceTester:
         self.test.prepare_test(gcmd)
         test_points = self.test.get_start_test_points()
         for point in test_points:
-            toolhead.manual_move(point, self.move_speed)
+            toolhead.manual_move(point, self.move_speed, self.move_accel)
             if len(test_points) > 1:
                 gcmd.respond_info(
                         "Probing point (%.3f, %.3f, %.3f)" % tuple(point))
@@ -209,6 +213,7 @@ class ResonanceTester:
     def cmd_TEST_RESONANCES(self, gcmd):
         # Parse parameters
         axis = _parse_axis(gcmd, gcmd.get("AXIS").lower())
+
 
         outputs = gcmd.get("OUTPUT", "resonances").lower().split(',')
         for output in outputs:

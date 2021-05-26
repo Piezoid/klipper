@@ -50,7 +50,7 @@ class TuningTower:
         if self.band:
             z = (math.floor(z / self.band) + .5) * self.band
         return self.start + z * self.factor
-    def move(self, newpos, speed):
+    def move(self, newpos, speed, accel):
         normal_transform = self.normal_transform
         if (newpos[3] > self.last_position[3] and newpos[2] != self.last_z
             and newpos[:3] != self.last_position[:3]):
@@ -70,7 +70,7 @@ class TuningTower:
                                                        % (newval,))
         # Forward move to actual handler
         self.last_position[:] = newpos
-        normal_transform.move(newpos, speed)
+        normal_transform.move(newpos, speed, accel)
     def end_test(self):
         self.gcode.respond_info("Ending tuning test mode")
         self.gcode_move.set_move_transform(self.normal_transform, force=True)

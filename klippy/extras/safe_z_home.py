@@ -19,6 +19,7 @@ class SafeZHoming:
         zconfig = config.getsection('stepper_z')
         self.max_z = zconfig.getfloat('position_max', note_valid=False)
         self.speed = config.getfloat('speed', 50.0, above=0.)
+        self.accel = config.getfloat('accel', 1000.0, above=0.)
         self.move_to_previous = config.getboolean('move_to_previous', False)
         self.printer.load_object(config, 'homing')
         self.gcode = self.printer.lookup_object('gcode')
@@ -44,13 +45,13 @@ class SafeZHoming:
                 pos[2] = 0
                 toolhead.set_position(pos, homing_axes=[2])
                 toolhead.manual_move([None, None, self.z_hop],
-                                     self.z_hop_speed)
+                                     self.z_hop_speed, self.accel)
                 if hasattr(toolhead.get_kinematics(), "note_z_not_homed"):
                     toolhead.get_kinematics().note_z_not_homed()
             elif pos[2] < self.z_hop:
                 # If the Z axis is homed, and below z_hop, lift it to z_hop
                 toolhead.manual_move([None, None, self.z_hop],
-                                     self.z_hop_speed)
+                                     self.z_hop_speed, self.accel)
 
         # Determine which axes we need to home
         need_x, need_y, need_z = [gcmd.get(axis, None) is not None
@@ -78,16 +79,16 @@ class SafeZHoming:
                 raise gcmd.error("Must home X and Y axes first")
             # Move to safe XY homing position
             prevpos = toolhead.get_position()
-            toolhead.manual_move([self.home_x_pos, self.home_y_pos], self.speed)
+            toolhead.manual_move([self.home_x_pos, self.home_y_pos], self.speed, self.accel)
             # Home Z
             g28_gcmd = self.gcode.create_gcode_command("G28", "G28", {'Z': '0'})
             self.prev_G28(g28_gcmd)
             # Perform Z Hop again for pressure-based probes
             if self.z_hop:
-                toolhead.manual_move([None, None, self.z_hop], self.z_hop_speed)
+                toolhead.manual_move([None, None, self.z_hop], self.z_hop_speed, self.accel)
             # Move XY back to previous positions
             if self.move_to_previous:
-                toolhead.manual_move(prevpos[:2], self.speed)
+                toolhead.manual_move(prevpos[:2], self.speed, self.accel)
 
 def load_config(config):
     return SafeZHoming(config)

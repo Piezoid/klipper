@@ -34,6 +34,7 @@ class GCodeMove:
             gcode.register_command(cmd, func, False, desc)
         gcode.register_command('G0', self.cmd_G1)
         gcode.register_command('M114', self.cmd_M114, True)
+        gcode.register_command('M204', self.cmd_M204)
         gcode.register_command('GET_POSITION', self.cmd_GET_POSITION, True,
                                desc=self.cmd_GET_POSITION_help)
         self.Coord = gcode.Coord
@@ -44,6 +45,8 @@ class GCodeMove:
         self.homing_position = [0.0, 0.0, 0.0, 0.0]
         self.speed = 25.
         self.speed_factor = 1. / 60.
+        self.print_accel = 1.5e3
+        self.travel_accel = 3e3
         self.extrude_factor = 1.
         # G-Code state
         self.saved_states = {}
@@ -105,6 +108,8 @@ class GCodeMove:
             'homing_origin': self.Coord(*self.homing_position),
             'position': self.Coord(*self.last_position),
             'gcode_position': self.Coord(*move_position),
+            'print_accel': self.print_accel,
+            'travel_accel': self.travel_accel,
         }
     def reset_last_position(self):
         if self.is_printer_ready:
@@ -131,6 +136,9 @@ class GCodeMove:
                 else:
                     # value relative to base coordinate position
                     self.last_position[3] = v + self.base_position[3]
+                accel = self.print_accel
+            else:
+                accel = self.travel_accel
             if 'F' in params:
                 gcode_speed = float(params['F'])
                 if gcode_speed <= 0.:
@@ -140,7 +148,7 @@ class GCodeMove:
         except ValueError as e:
             raise gcmd.error("Unable to parse move '%s'"
                              % (gcmd.get_commandline(),))
-        self.move_with_transform(self.last_position, self.speed)
+        self.move_with_transform(self.last_position, self.speed, accel)
     # G-Code coordinate manipulation
     def cmd_G20(self, gcmd):
         # Set units to inches
@@ -174,6 +182,13 @@ class GCodeMove:
         # Get Current Position
         p = self._get_gcode_position()
         gcmd.respond_raw("X:%.3f Y:%.3f Z:%.3f E:%.3f" % tuple(p))
+    def cmd_M204(self, gcmd):
+        accel = gcmd.get_float('S', None, above=0)
+        if accel:
+            self.travel_accel = self.print_accel = accel
+        else:
+            self.print_accel = gcmd.get_float('P', self.print_accel, above=0)
+            self.travel_accel = gcmd.get_float('T', self.travel_accel, above=0)
     def cmd_M220(self, gcmd):
         # Set speed factor override percentage
         value = gcmd.get_float('S', 100., above=0.) / (60. * 100.)
@@ -203,9 +218,10 @@ class GCodeMove:
         # Move the toolhead the given offset if requested
         if gcmd.get_int('MOVE', 0):
             speed = gcmd.get_float('MOVE_SPEED', self.speed, above=0.)
+            accel = gcmd.get_float('MOVE_ACCEL', self.travel_accel, above=0.)
             for pos, delta in enumerate(move_delta):
                 self.last_position[pos] += delta
-            self.move_with_transform(self.last_position, speed)
+            self.move_with_transform(self.last_position, speed, accel)
     cmd_SAVE_GCODE_STATE_help = "Save G-Code coordinate state"
     def cmd_SAVE_GCODE_STATE(self, gcmd):
         state_name = gcmd.get('NAME', 'default')
@@ -217,6 +233,8 @@ class GCodeMove:
             'homing_position': list(self.homing_position),
             'speed': self.speed, 'speed_factor': self.speed_factor,
             'extrude_factor': self.extrude_factor,
+            'print_accel': self.print_accel,
+            'travel_accel': self.travel_accel,
         }
     cmd_RESTORE_GCODE_STATE_help = "Restore a previously saved G-Code state"
     def cmd_RESTORE_GCODE_STATE(self, gcmd):
@@ -232,6 +250,8 @@ class GCodeMove:
         self.speed = state['speed']
         self.speed_factor = state['speed_factor']
         self.extrude_factor = state['extrude_factor']
+        self.print_accel = state['print_accel']
+        self.travel_accel = state['travel_accel']
         # Restore the relative E position
         e_diff = self.last_position[3] - state['last_position'][3]
         self.base_position[3] += e_diff
@@ -239,7 +259,7 @@ class GCodeMove:
         if gcmd.get_int('MOVE', 0):
             speed = gcmd.get_float('MOVE_SPEED', self.speed, above=0.)
             self.last_position[:3] = state['last_position'][:3]
-            self.move_with_transform(self.last_position, speed)
+            self.move_with_transform(self.last_position, speed, self.travel_accel)
     cmd_GET_POSITION_help = (
         "Return information on the current location of the toolhead")
     def cmd_GET_POSITION(self, gcmd):
@@ -248,20 +268,10 @@ class GCodeMove:
             raise gcmd.error("Printer not ready")
         kin = toolhead.get_kinematics()
         steppers = kin.get_steppers()
-        mcu_pos = " ".join(["%s:%d" % (s.get_name(), s.get_mcu_position())
-                            for s in steppers])
-        cinfo = [(s.get_name(), s.get_commanded_position()) for s in steppers]
-        stepper_pos = " ".join(["%s:%.6f" % (a, v) for a, v in cinfo])
-        kinfo = zip("XYZ", kin.calc_position(dict(cinfo)))
-        kin_pos = " ".join(["%s:%.6f" % (a, v) for a, v in kinfo])
-        toolhead_pos = " ".join(["%s:%.6f" % (a, v) for a, v in zip(
-            "XYZE", toolhead.get_position())])
-        gcode_pos = " ".join(["%s:%.6f"  % (a, v)
-                              for a, v in zip("XYZE", self.last_position)])
-        base_pos = " ".join(["%s:%.6f"  % (a, v)
-                             for a, v in zip("XYZE", self.base_position)])
-        homing_pos = " ".join(["%s:%.6f"  % (a, v)
-                               for a, v in zip("XYZ", self.homing_position)])
+        minfo = [(s.get_name(), s.get_mcu_position()) for s in steppers]
+        cinfo = {s.get_name(): s.get_commanded_position() for s in steppers}
+        render_named = lambda d: ' '.join("%s:%.6f" % (a, v) for a, v in d)
+        render_pos = lambda vec: render_named(zip("XYZE", vec))
         gcmd.respond_info("mcu: %s\n"
                           "stepper: %s\n"
                           "kinematic: %s\n"
@@ -269,8 +279,12 @@ class GCodeMove:
                           "gcode: %s\n"
                           "gcode base: %s\n"
                           "gcode homing: %s"
-                          % (mcu_pos, stepper_pos, kin_pos, toolhead_pos,
-                             gcode_pos, base_pos, homing_pos))
+                          % (render_named(minfo), render_named(cinfo.items()),
+                             render_pos(kin.calc_position(cinfo)),
+                             render_pos(toolhead.get_position()),
+                             render_pos(self.last_position),
+                             render_pos(self.base_position),
+                             render_pos(self.homing_position)))
 
 def load_config(config):
     return GCodeMove(config)
