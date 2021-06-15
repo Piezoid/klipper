@@ -16,12 +16,28 @@ class ArcSupport:
     def __init__(self, config):
         self.printer = config.get_printer()
         self.tolerance = config.getfloat('tolerance', 0.0125, above=0.0)
+        self.circumscribed = config.getfloat('circumscribed', 0, minval=0.0, maxval=1.0)
+        self._update()
 
         self.gcode_move = self.printer.load_object(config, 'gcode_move')
         self.gcode = self.printer.lookup_object('gcode')
         self.gcode.register_command("G2", self.cmd_G2)
         self.gcode.register_command("G3", self.cmd_G2)
-
+        self.gcode.register_command("SET_GCODE_ARCS", self.cmd_SET_GCODE_ARCS)
+    def _update(self):
+        x = self.circumscribed
+        x2 = x*x
+        # This number multiplied by the square root of the radius is the first order
+        # aproximation of the number of segments required for a full circle
+        self.segments_factor = sqrt((x2*(4*x - 3) + 1) / (24*self.tolerance))
+        # This number multiplied by the radius and the squared apex angle is the
+        # aproximation of the difference betwwen circumscribing circle and the radius
+        self.radius_add_frac = (1-x2) / 8
+    def cmd_SET_GCODE_ARCS(self, gcmd):
+        self.tolerance = tolerance = gcmd.get_float('TOLERANCE', self.tolerance, above=0.0)
+        self.circumscribed = circumscribed = gcmd.get_float('CIRCUMSCRIBED', self.circumscribed,  minval=0.0, maxval=1.0)
+        self._update()
+        gcmd.respond_info(f'{tolerance=} {circumscribed=}', log=False)
     def cmd_G2(self, gcmd):
         gcodestatus = self.gcode_move.get_status()
         if not gcodestatus['absolute_coordinates']:
@@ -100,17 +116,20 @@ class ArcSupport:
 
         # Determine number of segments
         radius = hypot(r_P, r_Q)
-        apothem = radius - tolerance
-        half_chord = sqrt(radius * radius - apothem * apothem)
+        segments = floor(fabs(angular_travel) * sqrt(radius) * self.segments_factor)
         linear_travel = asZ - curZ
-        if linear_travel:
-            half_chord = hypot(half_chord, linear_travel)
-        chord_angle = 2 * atan2(half_chord, apothem)
-        segments = max(1, floor(fabs(angular_travel) / chord_angle))
+        if segments <= 1:
+            return [[asX, asY, asZ]]
 
         # Generate coordinates
         theta_per_segment = angular_travel / segments
         linear_per_segment = linear_travel / segments
+
+        radius_frac = 1 + theta_per_segment*theta_per_segment*self.radius_add_frac
+        asI *= radius_frac
+        asJ *= radius_frac
+        #print(f"{radius=} {angular_travel=} {segments=} {theta_per_segment=} rf={theta_per_segment*theta_per_segment*self.radius_add_frac}")
+
         coords = []
         for i in range(1, int(segments)):
             dist_Z = i * linear_per_segment
