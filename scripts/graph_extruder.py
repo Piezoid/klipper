@@ -120,10 +120,24 @@ def calc_pa_raw(positions):
         out[i] = positions[i] + pa * (positions[i+1] - positions[i])
     return out
 
+# Calculate raw pressure advance positions
+def calc_pa_offset(positions):
+    pa = PRESSURE_ADVANCE * INV_SEG_TIME
+    out = [0.] * len(positions)
+    for i in indexes(positions):
+        out[i] = pa * (positions[i+1] - positions[i])
+    return out
+
 # Pressure advance after smoothing
 def calc_pa(positions):
     return calc_weighted(calc_pa_raw(positions), SMOOTH_TIME)
 
+# Pressure advance after smoothing only pa
+def calc_smooth_only_pa(positions):
+    return [x + y  for x, y in
+        zip(positions,
+            calc_weighted(calc_pa_offset(positions), SMOOTH_TIME))
+        ]
 
 ######################################################################
 # Plotting and startup
@@ -140,21 +154,45 @@ def plot_motion():
     # Smoothed motion
     sm_positions = calc_pa(positions)
     sm_velocities = gen_deriv(sm_positions)
+    # Smoothed PA without smoothing motion
+    sm_pa_positions = calc_smooth_only_pa(positions)
+    sm_pa_velocities = gen_deriv(sm_pa_positions)
     # Build plot
     times = [SEG_TIME * i for i in range(len(positions))]
-    trim_lists(times, velocities, accels,
+    trim_lists(times, positions, velocities, accels,
                pa_positions, pa_velocities,
-               sm_positions, sm_velocities)
-    fig, ax1 = matplotlib.pyplot.subplots(nrows=1, sharex=True)
+               sm_positions, sm_velocities,
+               sm_pa_positions, sm_pa_velocities)
+
+    fig, axs = matplotlib.pyplot.subplots(nrows=2, sharex=True)
+
+    ax1 = axs[0]
+    ax1.set_title("Extruder Position")
+    ax1.set_ylabel('Position (mm)')
+    pa_plot, = ax1.plot(times, pa_positions, 'r',
+                        label='Pressure Advance', alpha=0.3)
+    nom_plot, = ax1.plot(times, positions, 'black', label='Nominal')
+    sm_plot, = ax1.plot(times, sm_positions, 'g', label='Smooth PA and motion', alpha=0.9)
+    sm_pa_plot, = ax1.plot(times, sm_pa_positions, 'cyan', label='Smooth PA only', alpha=0.9)
+    fontP = matplotlib.font_manager.FontProperties()
+    fontP.set_size('x-small')
+    ax1.legend(handles=[nom_plot, pa_plot, sm_plot, sm_pa_plot], loc='best', prop=fontP)
+    ax1.set_xlabel('Time (s)')
+    ax1.grid(True)
+    ax1.set_xlim([0.1-SMOOTH_TIME, 0.1+SMOOTH_TIME])
+    ax1.set_ylim([0, sm_pa_positions[time_to_index(0.1+SMOOTH_TIME)]])
+
+    ax1 = axs[1]
     ax1.set_title("Extruder Velocity")
     ax1.set_ylabel('Velocity (mm/s)')
     pa_plot, = ax1.plot(times, pa_velocities, 'r',
                         label='Pressure Advance', alpha=0.3)
     nom_plot, = ax1.plot(times, velocities, 'black', label='Nominal')
-    sm_plot, = ax1.plot(times, sm_velocities, 'g', label='Smooth PA', alpha=0.9)
+    sm_plot, = ax1.plot(times, sm_velocities, 'g', label='Smooth PA and motion', alpha=0.9)
+    sm_pa_plot, = ax1.plot(times, sm_pa_velocities, 'cyan', label='Smooth PA only', alpha=0.9)
     fontP = matplotlib.font_manager.FontProperties()
     fontP.set_size('x-small')
-    ax1.legend(handles=[nom_plot, pa_plot, sm_plot], loc='best', prop=fontP)
+    ax1.legend(handles=[nom_plot, pa_plot, sm_plot, sm_pa_plot], loc='best', prop=fontP)
     ax1.set_xlabel('Time (s)')
     ax1.grid(True)
     fig.tight_layout()

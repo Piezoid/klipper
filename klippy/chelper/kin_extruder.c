@@ -28,31 +28,30 @@
 // Calculate the definitive integral of the motion formula:
 //   position(t) = base + t * (start_v + t * half_accel)
 static double
-extruder_integrate(double base, double start_v, double half_accel
+extruder_integrate(double delta_base, double start_dv, double half_accel
                    , double start, double end)
 {
-    double half_v = .5 * start_v, sixth_a = (1. / 3.) * half_accel;
-    double si = start * (base + start * (half_v + start * sixth_a));
-    double ei = end * (base + end * (half_v + end * sixth_a));
+    double half_dv = .5 * start_dv;
+    double si = start * (delta_base + start * half_dv);
+    double ei = end * (delta_base + end * half_dv);
     return ei - si;
 }
 
 // Calculate the definitive integral of time weighted position:
 //   weighted_position(t) = t * (base + t * (start_v + t * half_accel))
 static double
-extruder_integrate_time(double base, double start_v, double half_accel
+extruder_integrate_time(double delta_base, double start_dv, double half_accel
                         , double start, double end)
 {
-    double half_b = .5 * base, third_v = (1. / 3.) * start_v;
-    double eighth_a = .25 * half_accel;
-    double si = start * start * (half_b + start * (third_v + start * eighth_a));
-    double ei = end * end * (half_b + end * (third_v + end * eighth_a));
+    double half_db = .5 * delta_base, third_deltav = (1. / 3.) * start_dv;
+    double si  = start * start * (half_db + start * third_deltav);
+    double ei  = end * end * (half_db + end * third_deltav);
     return ei - si;
 }
 
 // Calculate the definitive integral of extruder for a given move
 static double
-pa_move_integrate(struct move *m, double base, double start, double end,
+pa_move_integrate(struct move *m, double start, double end,
                   double time_offset)
 {
     if (start < 0.)
@@ -60,13 +59,13 @@ pa_move_integrate(struct move *m, double base, double start, double end,
     if (end > m->move_t)
         end = m->move_t;
     // Calculate base position and velocity with pressure advance
-    double pressure_advance = m->axes_r.y;
-    base += pressure_advance * m->start_v;
-    double start_v = m->start_v + pressure_advance * 2. * m->half_accel;
+    double pressure_advance =  m->axes_r.y;
+    double delta_base = pressure_advance * m->start_v;
+    double start_dv = pressure_advance * 2. * m->half_accel;
     // Calculate definitive integral
     double ha = m->half_accel;
-    double iext = extruder_integrate(base, start_v, ha, start, end);
-    double wgt_ext = extruder_integrate_time(base, start_v, ha, start, end);
+    double iext = extruder_integrate(delta_base, start_dv, ha, start, end);
+    double wgt_ext = extruder_integrate_time(delta_base, start_dv, ha, start, end);
     return wgt_ext - time_offset * iext;
 }
 
@@ -77,22 +76,20 @@ pa_range_integrate(struct move *m, double move_time, double hst)
     // Calculate integral for the current move
     double res = 0., start = move_time - hst, end = move_time + hst;
     double start_base = m->start_pos.x;
-    res += pa_move_integrate(m, 0., start, move_time, start);
-    res -= pa_move_integrate(m, 0., move_time, end, end);
+    res += pa_move_integrate(m, start, move_time, start);
+    res -= pa_move_integrate(m, move_time, end, end);
     // Integrate over previous moves
     struct move *prev = m;
     while (unlikely(start < 0.)) {
         prev = list_prev_entry(prev, node);
         start += prev->move_t;
-        double base = prev->start_pos.x - start_base;
-        res += pa_move_integrate(prev, base, start, prev->move_t, start);
+        res += pa_move_integrate(prev, start, prev->move_t, start);
     }
     // Integrate over future moves
     while (unlikely(end > m->move_t)) {
         end -= m->move_t;
         m = list_next_entry(m, node);
-        double base = m->start_pos.x - start_base;
-        res -= pa_move_integrate(m, base, 0., end, end);
+        res -= pa_move_integrate(m, 0., end, end);
     }
     return res;
 }
@@ -113,7 +110,7 @@ extruder_calc_position(struct stepper_kinematics *sk, struct move *m
         return m->start_pos.x + move_get_distance(m, move_time);
     // Apply pressure advance and average over smooth_time
     double area = pa_range_integrate(m, move_time, hst);
-    return m->start_pos.x + area * es->inv_half_smooth_time2;
+    return m->start_pos.x + area * es->inv_half_smooth_time2 + move_get_distance(m, move_time);
 }
 
 void __visible
