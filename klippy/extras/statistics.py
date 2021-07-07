@@ -36,8 +36,8 @@ class PrinterSysStats:
             try:
                 self.mem_file.seek(0)
                 data = self.mem_file.read()
-                for line in data.split('\n'):
-                    if line.startswith("MemAvailable:"):
+                for line in data.split(b'\n'):
+                    if line.startswith(b"MemAvailable:"):
                         self.last_mem_avail = int(line.split()[1])
                         msg = "%s memavail=%d" % (msg, self.last_mem_avail)
                         break
