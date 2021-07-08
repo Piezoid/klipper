@@ -95,6 +95,8 @@ class GCodeDispatch:
         self.ready_gcode_handlers = {}
         self.mux_commands = {}
         self.gcode_help = {}
+        self.pending_gcmds = []
+        self.last_block_comments = []
         # Register commands needed before config file is loaded
         handlers = ['M110', 'M112', 'M115',
                     'RESTART', 'FIRMWARE_RESTART', 'ECHO', 'STATUS', 'HELP']
@@ -148,6 +150,13 @@ class GCodeDispatch:
         return dict(self.gcode_help)
     def register_output_handler(self, cb):
         self.output_callbacks.append(cb)
+    def get_pending_gcode(self):
+        last_block_comments = self.last_block_comments
+        pending_gcmds = self.pending_gcmds
+        res = tuple(pending_gcmds), tuple(last_block_comments)
+        pending_gcmds.clear()
+        last_block_comments.clear()
+        return res
     def _handle_shutdown(self):
         if not self.is_printer_ready:
             return
@@ -163,14 +172,22 @@ class GCodeDispatch:
     # Parse input into commands
     args_r = re.compile('([A-Z_]+|[A-Z*/])')
     def _process_commands(self, commands, need_ack=True):
+        last_block_comments = self.last_block_comments
+        pending_gcmds = self.pending_gcmds
         for line in commands:
             # Ignore comments and leading/trailing spaces
             line = origline = line.strip()
             cpos = line.find(';')
             if cpos >= 0:
-                line = line[:cpos]
+                comment = line[cpos+1:].lstrip()
+                line = line[:cpos].rstrip()
+                last_block_comments.append(comment)
+            if not line:
+                continue
             # Break line into parts and determine command
-            parts = self.args_r.split(line.upper())
+            line = line.upper()
+            pending_gcmds.append(line)
+            parts = self.args_r.split(line)
             numparts = len(parts)
             cmd = ""
             if numparts >= 3 and parts[1] != 'N':

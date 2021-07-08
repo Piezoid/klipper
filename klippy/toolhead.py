@@ -3,7 +3,7 @@
 # Copyright (C) 2016-2021  Kevin O'Connor <kevin@koconnor.net>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
-import math, logging, importlib
+import math, logging, importlib, pickle
 import mcu, chelper, kinematics.extruder
 
 # Common suffixes: _d is distance (in mm), _v is velocity (in
@@ -12,8 +12,9 @@ import mcu, chelper, kinematics.extruder
 
 # Class to track each move request
 class Move:
-    def __init__(self, toolhead, start_pos, end_pos, speed, accel):
+    def __init__(self, toolhead, start_pos, end_pos, speed, accel, pending_gcode):
         self.toolhead = toolhead
+        self.pending_gcode = pending_gcode
         self.start_pos = tuple(start_pos)
         self.end_pos = tuple(end_pos)
         max_velocity, self.accel  = toolhead.get_max_velocity()
@@ -50,6 +51,7 @@ class Move:
         # can change in this move.
         self.max_start_v2 = 0.
         self.max_smoothed_v2 = 0.
+        self.max_start_limit = 'standstill'
     @property
     def delta_v2(self):
         return 2.0 * self.move_d * self.accel
@@ -96,22 +98,33 @@ class Move:
             move_centripetal_v2 = .5 * self.move_d * tan_theta_d2 * self.accel
             prev_move_centripetal_v2 = (.5 * prev_move.move_d * tan_theta_d2
                                         * prev_move.accel)
-            centripetal = min(R * self.accel,R * prev_move.accel,
-                #(move_centripetal_v2, prev_move_centripetal_v2,
+            centripetal = min(
+                (R * self.accel, 'R*accel'),
+                (R * prev_move.accel, 'R*prev.accel'),
+                #(move_centripetal_v2, 'centripetal'),
+                #(prev_move_centripetal_v2, 'prev_centripetal')
                 )
         else:
-            centripetal = min(radius * self.accel, radius * prev_move.accel)
+            centripetal = min(
+                (radius * self.accel, 'arcR*accel'),
+                (radius * prev_move.accel, 'arcR*prev.accel')
+                )
         # Apply limits
-        self.max_start_v2 = min(
+        self.max_start_v2, self.max_start_limit = min(
             centripetal,
-            extruder_v2, self.max_cruise_v2, prev_move.max_cruise_v2,
-            prev_move.max_start_v2 + prev_move.delta_v2)
-
+            (extruder_v2, 'extruder'),
+            (self.max_cruise_v2, 'max_cruise'),
+            (prev_move.max_cruise_v2, 'prev_max_cruise'),
+            (prev_move.max_start_v2 + prev_move.delta_v2, 'prev_reachable')
+            )
         self.max_smoothed_v2 = min(
             self.max_start_v2
             , prev_move.max_smoothed_v2 + prev_move.smooth_delta_v2)
     RAMP_MAX_REL_COST=1.25
     def set_junction(self, start_v2, cruise_v2, end_v2):
+        self.start_v2 = start_v2
+        self.cruise_v2 = cruise_v2
+        self.end_v2 = end_v2
         # Determine accel, cruise, and decel portions of the move distance
         half_inv_accel = .5 / self.accel
         accel_d = (cruise_v2 - start_v2) * half_inv_accel
@@ -259,7 +272,7 @@ class ToolHead:
         self.commanded_pos = [0., 0., 0., 0.]
         self.printer.register_event_handler("klippy:shutdown",
                                             self._handle_shutdown)
-
+        self.moves_fd = open('/tmp/moves.pk', 'wb')
         # Velocity and acceleration control
         self.max_velocity = self.config_max_velocity = config.getfloat('max_velocity', above=0.)
         self.max_accel = self.config_max_accel = config.getfloat('max_accel', above=0.)
@@ -300,7 +313,7 @@ class ToolHead:
         self.step_generators = []
         # Create kinematics class
         gcode = self.printer.lookup_object('gcode')
-
+        self.gcode = gcode
         self.Coord = gcode.Coord
         self.extruder = kinematics.extruder.DummyExtruder(self.printer)
         kin_name = config.get('kinematics')
@@ -364,8 +377,13 @@ class ToolHead:
                 self.reactor.update_timer(self.flush_timer, self.reactor.NOW)
             self._calc_print_time()
         # Queue moves into trapezoid motion queue (trapq)
+        moves_log = []
         next_move_time = self.print_time
         for move in moves:
+            moves_log.append((move.start_pos, move.axes_d, *move.pending_gcode,
+                              move.max_cruise_v2, move.accel, move.cruise_accel_ratio,
+                              move.max_start_v2, move.max_start_limit, move.max_smoothed_v2,
+                              move.start_v2, move.cruise_v2, move.end_v2))
             if move.is_kinematic_move:
                 self.trapq_append(
                     self.trapq, next_move_time,
@@ -384,6 +402,7 @@ class ToolHead:
             self._update_drip_move_time(next_move_time)
         self._update_move_time(next_move_time)
         self.last_kin_move_time = next_move_time
+        pickle.dump(moves_log, self.moves_fd)
     def flush_step_generation(self):
         # Transition from "Flushed"/"Priming"/main state to "Flushed" state
         self.move_queue.flush()
@@ -458,7 +477,7 @@ class ToolHead:
         self.kin.set_position(newpos, homing_axes)
         self.printer.send_event("toolhead:set_position")
     def move(self, newpos, speed, accel):
-        move = Move(self, self.commanded_pos, newpos, speed, accel)
+        move = Move(self, self.commanded_pos, newpos, speed, accel, self.gcode.get_pending_gcode())
         if not move.move_d:
             return
         if move.is_kinematic_move:
