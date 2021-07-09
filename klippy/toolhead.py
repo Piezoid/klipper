@@ -72,34 +72,40 @@ class Move:
         ep = self.end_pos
         m = "%s: %.3f %.3f %.3f [%.3f]" % (msg, ep[0], ep[1], ep[2], ep[3])
         return self.toolhead.printer.command_error(m)
-    def calc_junction(self, prev_move):
+    def calc_junction(self, prev_move, radius=None):
         if not self.is_kinematic_move or not prev_move.is_kinematic_move:
             return
         # Allow extruder to calculate its maximum junction
         extruder_v2 = self.toolhead.extruder.calc_junction(prev_move, self)
         # Find max velocity using "approximated centripetal velocity"
-        axes_r = self.axes_r
-        prev_axes_r = prev_move.axes_r
-        junction_cos_theta = -(axes_r[0] * prev_axes_r[0]
-                               + axes_r[1] * prev_axes_r[1]
-                               + axes_r[2] * prev_axes_r[2])
-        if junction_cos_theta > 0.999999:
-            return
-        junction_cos_theta = max(junction_cos_theta, -0.999999)
-        sin_theta_d2 = math.sqrt(0.5*(1.0-junction_cos_theta))
-        R = (self.toolhead.junction_deviation * sin_theta_d2
-             / (1. - sin_theta_d2))
-        # Approximated circle must contact moves no further away than mid-move
-        tan_theta_d2 = sin_theta_d2 / math.sqrt(0.5*(1.0+junction_cos_theta))
-        move_centripetal_v2 = .5 * self.move_d * tan_theta_d2 * self.accel
-        prev_move_centripetal_v2 = (.5 * prev_move.move_d * tan_theta_d2
-                                    * prev_move.accel)
+        if radius is None:
+            axes_r = self.axes_r
+            prev_axes_r = prev_move.axes_r
+            junction_cos_theta = -(axes_r[0] * prev_axes_r[0]
+                                + axes_r[1] * prev_axes_r[1]
+                                + axes_r[2] * prev_axes_r[2])
+            if junction_cos_theta > 0.999999:
+                return
+            junction_cos_theta = max(junction_cos_theta, -0.999999)
+            sin_theta_d2 = math.sqrt(0.5*(1.0-junction_cos_theta))
+            R = (self.toolhead.junction_deviation * sin_theta_d2
+                / (1. - sin_theta_d2))
+            # Approximated circle must contact moves no further away than mid-move
+            tan_theta_d2 = sin_theta_d2 / math.sqrt(0.5*(1.0+junction_cos_theta))
+            move_centripetal_v2 = .5 * self.move_d * tan_theta_d2 * self.accel
+            prev_move_centripetal_v2 = (.5 * prev_move.move_d * tan_theta_d2
+                                        * prev_move.accel)
+            centripetal = min(R * self.accel,R * prev_move.accel,
+                #(move_centripetal_v2, prev_move_centripetal_v2,
+                )
+        else:
+            centripetal = min(radius * self.accel, radius * prev_move.accel)
         # Apply limits
         self.max_start_v2 = min(
-            R * self.accel, R * prev_move.accel,
-            move_centripetal_v2, prev_move_centripetal_v2,
+            centripetal,
             extruder_v2, self.max_cruise_v2, prev_move.max_cruise_v2,
             prev_move.max_start_v2 + prev_move.delta_v2)
+
         self.max_smoothed_v2 = min(
             self.max_start_v2
             , prev_move.max_smoothed_v2 + prev_move.smooth_delta_v2)
@@ -189,11 +195,11 @@ class MoveQueue:
         self.toolhead._process_moves(queue[:flush_count])
         # Remove processed moves from the queue
         del queue[:flush_count]
-    def add_move(self, move):
+    def add_move(self, move, radius=None):
         self.queue.append(move)
         if len(self.queue) == 1:
             return
-        move.calc_junction(self.queue[-2])
+        move.calc_junction(self.queue[-2], radius)
         self.junction_flush -= move.min_move_t
         if self.junction_flush <= 0.:
             # Enough moves have been queued to reach the target flush time.
@@ -223,6 +229,7 @@ class ToolHead:
         self.commanded_pos = [0., 0., 0., 0.]
         self.printer.register_event_handler("klippy:shutdown",
                                             self._handle_shutdown)
+
         # Velocity and acceleration control
         self.max_velocity = self.config_max_velocity = config.getfloat('max_velocity', above=0.)
         self.max_accel = self.config_max_accel = config.getfloat('max_accel', above=0.)
@@ -233,6 +240,7 @@ class ToolHead:
         self.square_corner_velocity = self.config_square_corner_velocity
         self.junction_deviation = 0.
         self._calc_junction_deviation()
+        self.current_arc_radius = None
         # Print time tracking
         self.buffer_time_low = config.getfloat(
             'buffer_time_low', 1.000, above=0.)
@@ -262,6 +270,7 @@ class ToolHead:
         self.step_generators = []
         # Create kinematics class
         gcode = self.printer.lookup_object('gcode')
+
         self.Coord = gcode.Coord
         self.extruder = kinematics.extruder.DummyExtruder(self.printer)
         kin_name = config.get('kinematics')
@@ -427,7 +436,7 @@ class ToolHead:
         if move.axes_d[3]:
             self.extruder.check_move(move)
         self.commanded_pos[:] = move.end_pos
-        self.move_queue.add_move(move)
+        self.move_queue.add_move(move, self.current_arc_radius)
         if self.print_time > self.need_check_stall:
             self._check_stall()
     def manual_move(self, coord, speed, accel):

@@ -59,7 +59,7 @@ class ArcSupport:
         clockwise = (gcmd.get_command() == 'G2')
 
         # Build list of linear coordinates to move to
-        coords = self.planArc(curX, curY, curZ, curE, asX, asY, asZ, asI, asJ,
+        coords, radius = self.planArc(curX, curY, curZ, curE, asX, asY, asZ, asI, asJ,
                               clockwise)
         e_per_move = e_base = 0.
         if asE is not None:
@@ -68,6 +68,7 @@ class ArcSupport:
             e_per_move = (asE - e_base) / len(coords)
 
         # Convert coords into G1 commands
+        toolhead = self.printer.lookup_object('toolhead')
         create_gcode_command = self.gcode.create_gcode_command
         cmd_G1 = self.gcode_move.cmd_G1
         for cX, cY, cZ in coords:
@@ -79,6 +80,8 @@ class ArcSupport:
             if asF is not None:
                 g1_params['F'] = asF
             cmd_G1(create_gcode_command("G1", "G1", g1_params))
+            toolhead.current_arc_radius = radius
+        toolhead.current_arc_radius = None
 
     # function planArc() originates from marlin plan_arc()
     # https://github.com/MarlinFirmware/Marlin
@@ -119,7 +122,7 @@ class ArcSupport:
         segments = floor(fabs(angular_travel) * sqrt(radius) * self.segments_factor)
         linear_travel = asZ - curZ
         if segments <= 1:
-            return [[asX, asY, asZ]]
+            return [[asX, asY, asZ]], None
 
         # Generate coordinates
         theta_per_segment = angular_travel / segments
@@ -143,7 +146,7 @@ class ArcSupport:
             coords.append(c)
 
         coords.append([asX, asY, asZ])
-        return coords
+        return coords, radius
 
 def load_config(config):
     return ArcSupport(config)
