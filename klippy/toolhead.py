@@ -109,6 +109,7 @@ class Move:
         self.max_smoothed_v2 = min(
             self.max_start_v2
             , prev_move.max_smoothed_v2 + prev_move.smooth_delta_v2)
+    RAMP_MAX_REL_COST=1.25
     def set_junction(self, start_v2, cruise_v2, end_v2):
         # Determine accel, cruise, and decel portions of the move distance
         half_inv_accel = .5 / self.accel
@@ -124,6 +125,34 @@ class Move:
         self.accel_t = accel_d / ((start_v + cruise_v) * 0.5)
         self.cruise_t = cruise_d / cruise_v
         self.decel_t = decel_d / ((end_v + cruise_v) * 0.5)
+        # Compare the trapeze to a constant acceleration ramp
+        ramp_mean_v = (end_v + start_v)*0.5
+        if ramp_mean_v < 1e-3:
+            return
+        move_t0 = self.accel_t + self.cruise_t + self.decel_t
+        ramp_t = self.move_d / ramp_mean_v
+        if ramp_t <= self.RAMP_MAX_REL_COST * move_t0:
+            ramp_accel = abs(end_v2 - start_v2) * 0.5 / self.move_d
+            if ramp_accel > 0:
+                self.cruise_d = self.cruise_t = 0
+                self.accel = ramp_accel
+                if end_v2 > start_v2:
+                    self.accel_d = self.move_d
+                    self.accel_t = ramp_t
+                    self.cruise_v = end_v
+                    self.decel_d = self.decel_t = 0
+                else:
+                    self.accel_d = self.accel_t = 0
+                    self.cruise_v = start_v
+                    self.decel_d = self.move_d
+                    self.decel_t = ramp_t
+            else:
+                self.cruise_v = start_v
+                self.accel = 0
+                self.accel_d = self.accel_t = 0
+                self.cruise_d = self.move_d
+                self.cruise_t = self.move_d / start_v
+                self.decel_d = self.decel_t = 0
 
 LOOKAHEAD_FLUSH_TIME = 0.250
 
