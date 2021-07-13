@@ -73,10 +73,11 @@ class Move:
         m = "%s: %.3f %.3f %.3f [%.3f]" % (msg, ep[0], ep[1], ep[2], ep[3])
         return self.toolhead.printer.command_error(m)
     def calc_junction(self, prev_move, radius=None):
-        if not self.is_kinematic_move or not prev_move.is_kinematic_move:
-            return
         # Allow extruder to calculate its maximum junction
         extruder_v2 = self.toolhead.extruder.calc_junction(prev_move, self)
+        if not self.is_kinematic_move or not prev_move.is_kinematic_move:
+            self.max_start_v2 = self.max_smoothed_v2 = min(extruder_v2, self.max_cruise_v2)
+            return
         # Find max velocity using "approximated centripetal velocity"
         if radius is None:
             axes_r = self.axes_r
